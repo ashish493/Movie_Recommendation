@@ -32,4 +32,25 @@ training_set = convert(training_set)
 test_set = convert(test_set)
 
 
+class sae(nn.):
 
+
+
+num_epoch = 256
+for epoch in range(1, num_epoch + 1):
+    train_loss = 0
+    s = 0.
+    for id_user in range(num_users):
+        input = Variable(training_set[id_user]).unsqueeze(0)
+        target = input.clone()
+        if torch.sum(target.data > 0) > 0:
+            output = sae(input)
+            target.require_grad = False
+            output[target == 0] = 0
+            loss = criterion(output, target)
+            mean_corrector = num_movies/float(torch.sum(target.data > 0) + 1e-10)
+            loss.backward()
+            train_loss += num.sqrt(loss.data[0]*mean_corrector)
+            s += 1.
+            optimizer.step()
+    print('epoch: '+str(epoch)+' loss: '+str(train_loss/s))    
