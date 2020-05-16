@@ -1,5 +1,5 @@
 # Movie_Recommendation
-An application which will recommend  movies based on collaborative filtering f different users and their movie tastes.
+An application which will recommend  movies based on collaborative filtering of different users and their movie tastes.
 
 
 Still in early face of development.
