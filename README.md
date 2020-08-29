@@ -3,3 +3,6 @@ An application which will recommend  movies based on collaborative filtering of 
 
 
 Still in early face of development.
+
+Goals: - 
+Both Python and C++ implementation of project.
