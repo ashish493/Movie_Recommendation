@@ -1,4 +1,5 @@
-pip3
-pandas
-pytorch
-numpy
+Flask
+pandas 
+bcrypt 
+Flask-JWT-Extended 
+scikit-learn

@@ -1,0 +1,65 @@
+<div>
+    <h2>Movie Recommendation System</h2>
+  
+    <form (ngSubmit)="login()">
+      <div class="form-group">
+        <label for="username">Username:</label>
+        <input type="text" [(ngModel)]="username" name="username" class="form-control" required>
+      </div>
+      <div class="form-group">
+        <label for="password">Password:</label>
+        <input type="password" [(ngModel)]="password" name="password" class="form-control" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Login</button>
+    </form>
+  
+    <div *ngIf="loggedIn">
+      <h2>Rate a Movie</h2>
+      <form (ngSubmit)="rateMovie()">
+        <div class="form-group">
+          <label for="movieId">Movie ID:</label>
+          <input type="number" [(ngModel)]="movieId" name="movieId" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="rating">Rating (1-5):</label>
+          <input type="number" [(ngModel)]="rating" name="rating" class="form-control" min="1" max="5" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Submit Rating</button>
+      </form>
+  
+      <div *ngIf="recommendations.length > 0">
+        <h3>Recommended Movies</h3>
+        <ul class="list-group">
+          <li *ngFor="let movie of recommendations" class="list-group-item">
+            Movie ID: {{movie.movie_id}}, Predicted Rating: {{movie.predicted_rating}}
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h2>Movie Rating</h2>
+    <!-- Your existing rating UI goes here -->
+  
+    <!-- Button to fetch recommendations -->
+    <button class="btn btn-primary" (click)="getRecommendations()">Get Recommendations</button>
+  
+    <!-- Error message -->
+    <div *ngIf="errorMessage" class="alert alert-danger">
+      {{errorMessage}}
+    </div>
+  
+    <!-- Recommendations list -->
+    <div *ngIf="recommendations.length > 0">
+      <h3>Recommendations for You:</h3>
+      <ul class="list-group">
+        <li *ngFor="let movie of recommendations" class="list-group-item">
+          {{ movie.title }} (Rating: {{ movie.predictedRating }})
+        </li>
+      </ul>
+    </div>
+    <div *ngIf="recommendations.length === 0 && !errorMessage">
+      <p>No recommendations available yet.</p>
+    </div>
+  </div>
