@@ -22,6 +22,7 @@ export class MovieService {
     return this.http.post(url, { username, password });
   }
 
+  // Register a new user
   register(username: string, password: string): Observable<any> {
     const url = `${this.apiUrl}/register`;
     return this.http.post(url, { username, password });
@@ -45,5 +46,11 @@ export class MovieService {
     });
     const url = `${this.apiUrl}/recommendations/${userId}`;
     return this.http.get<any>(url, { headers });
+  }
+
+  // Get the list of movies (movie_id and movie_name) for the dropdown
+  getMovieList(): Observable<any[]> {
+    const url = `${this.apiUrl}/movies`;
+    return this.http.get<any[]>(url);
   }
 }

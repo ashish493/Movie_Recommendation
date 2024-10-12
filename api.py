@@ -29,6 +29,18 @@ jwt = JWTManager(app)
 users_db = {}
 
 # Load MovieLens 100K Dataset
+def load_movie_names(filepath):
+    movie_names = {}
+    with open(filepath, encoding='latin-1') as f:
+        for line in f:
+            fields = line.split('|')
+            movie_id = int(fields[0])
+            movie_name = fields[1]
+            movie_names[movie_id] = movie_name
+    return movie_names
+
+movie_names = load_movie_names('dataset/ml-100k/u.item')
+
 ratings_file = 'dataset/ml-100k/u.data'
 ratings_df = pd.read_csv(ratings_file, sep='\t', names=['userId', 'movieId', 'rating', 'timestamp'])
 
@@ -130,23 +142,22 @@ def rate_movie():
     new_rating = Rating(user_id=user_id, movie_id=movie_id, rating=rating)
     db.session.add(new_rating)
     db.session.commit()
-    
-    return jsonify({"msg": f"User {user_id} rated movie {movie_id} with {rating}"}), 200
 
+    movie_name = movie_names.get(movie_id, "Unknown Movie")  # Fetch movie name
+
+    return jsonify({"msg": f"User {user_id} rated movie '{movie_name}' with {rating}"}), 200
 
 # Get movie recommendations (JWT required)
 @app.route('/recommendations/<int:user_id>', methods=['GET'])
 @jwt_required()
-def get_recommendations(user_id):
-    # print(user_id, "userid received ")
-    
+def get_recommendations_SVD_Factorization(user_id):
     # Get similarity scores for the current user
     similar_users = list(enumerate(user_similarity[user_id - 1]))  # Adjust user_id index
-    similar_users = sorted(similar_users, key=lambda x: x[1], reverse=True)  # Sort by similarity score
-    # print("similar_users",similar_users)
+    similar_users = sorted(similar_users, key=lambda x: x[1], reverse=True)
+
     # Get top similar users
     top_similar_users = similar_users[1:11]  # Exclude the user themselves
-    print("top_similar_users",top_similar_users)
+
     # Gather recommendations from top similar users
     movie_scores = {}
     
@@ -164,12 +175,16 @@ def get_recommendations(user_id):
 
     # Sort movies by predicted score
     recommendations = sorted(movie_scores.items(), key=lambda x: x[1], reverse=True)[:10]
-    print(recommendations, "recommendations received ")
 
-    # Prepare the recommendations for output
-    recommendations_list = [{'movie_id': movie[0], 'predicted_rating': movie[1]} for movie in recommendations]
-    
+    # Prepare the recommendations for output with movie names
+    recommendations_list = [{'movie_name': movie_names.get(movie[0], "Unknown Movie"), 'predicted_rating': movie[1]} for movie in recommendations]
+
     return jsonify({'recommendations': recommendations_list}), 200
+
+@app.route('/movies', methods=['GET'])
+def get_movie_list():
+    movie_list = [{'movie_id': mid, 'movie_name': name} for mid, name in movie_names.items()]
+    return jsonify(movie_list), 200
 
 if __name__ == '__main__':
     app.run(debug=True)

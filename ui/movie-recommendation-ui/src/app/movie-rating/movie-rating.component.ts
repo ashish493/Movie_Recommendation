@@ -14,9 +14,12 @@ export class MovieRatingComponent {
   recommendations: any[] = [];
   loggedIn: boolean = false;
   errorMessage: string = "";
+  movieList: any[] = [];  // Store the list of movies
 
   userId: number = 1; 
-  constructor(private movieService: MovieService) { }
+  constructor(private movieService: MovieService) {
+    this.loadMovies();  // Load the list of movies when component is initialized
+  }
 
   // Login and get JWT token
   login() {
@@ -31,10 +34,25 @@ export class MovieRatingComponent {
     );
   }
 
+  // Load the list of movies from the API
+  loadMovies() {
+    this.movieService.getMovieList().subscribe(
+      (data: any[]) => {
+        this.movieList = data.map(movie => ({
+          id: movie.movie_id,
+          name: movie.movie_name
+        }));
+      },
+      error => {
+        console.error('Error loading movies:', error);
+      }
+    );
+  }
+
   // Submit a movie rating
   rateMovie() {
     if (this.movieId && this.rating) {
-      this.movieService.rateMovie(1, this.movieId, this.rating).subscribe(
+      this.movieService.rateMovie(this.userId, this.movieId, this.rating).subscribe(
         response => {
           console.log('Movie rated successfully:', response);
           this.getRecommendations();
