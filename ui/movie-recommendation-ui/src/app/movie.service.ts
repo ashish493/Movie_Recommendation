@@ -38,6 +38,16 @@ export class MovieService {
     const body = { user_id: userId, movie_id: movieId, rating: rating };
     return this.http.post<any>(url, body, { headers });
   }
+  evaluateModel(): Observable<any> {
+    const headers = new HttpHeaders({
+      'Authorization': `Bearer ${this.token}`,
+      'Content-Type': 'application/json'
+    });
+    const url = `${this.apiUrl}/evaluate_model`;
+    // const body = { user_id: userId, movie_id: movieId, rating: rating };
+    return this.http.post<any>(url, { headers });
+  }
+
 
   // Get recommendations for a user
   getRecommendations(userId: number): Observable<any> {

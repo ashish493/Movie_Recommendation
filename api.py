@@ -6,9 +6,15 @@ import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import cosine_similarity
 from models import db, Rating, User
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import numpy as np
+from prometheus_client import Counter, Gauge, Summary, generate_latest
+from prometheus_client.core import CollectorRegistry
+from prometheus_flask_exporter import PrometheusMetrics
 
 app = Flask(__name__)
-
+metrics = PrometheusMetrics(app) 
 # DB Config
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///moviedb.sqlite'  # Path to your SQLite database file
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -44,6 +50,8 @@ movie_names = load_movie_names('dataset/ml-100k/u.item')
 ratings_file = 'dataset/ml-100k/u.data'
 ratings_df = pd.read_csv(ratings_file, sep='\t', names=['userId', 'movieId', 'rating', 'timestamp'])
 
+train_data, test_data = train_test_split(ratings_df, test_size=0.2, random_state=42)
+train_user_item_matrix = train_data.pivot(index='userId', columns='movieId', values='rating').fillna(0)
 # Populate data from existing dataset to our DB
 with app.app_context():
     # Step 1: Populate the 'user' table with unique users from the dataset
@@ -95,6 +103,29 @@ user_item_matrix = ratings_df.pivot(index='userId', columns='movieId', values='r
 svd = TruncatedSVD(n_components=50)
 latent_matrix = svd.fit_transform(user_item_matrix)
 
+train_latent_matrix = svd.fit_transform(train_user_item_matrix)
+approx_matrix = np.dot(train_latent_matrix, svd.components_)
+train_pred_matrix = pd.DataFrame(approx_matrix, index=train_user_item_matrix.index, columns=train_user_item_matrix.columns)
+
+def predict_rating(user_id, movie_id):
+    try:
+        return train_pred_matrix.loc[user_id, movie_id]
+    except KeyError:
+        return np.nan  # Return NaN if user_id or movie_id is not found in the training set
+
+# Make predictions for the test set
+test_data['predicted_rating'] = test_data.apply(lambda row: predict_rating(row['userId'], row['movieId']), axis=1)
+
+# Drop rows with missing predictions
+test_data.dropna(subset=['predicted_rating'], inplace=True)
+
+# Calculate RMSE and MAE
+rmse = np.sqrt(mean_squared_error(test_data['rating'], test_data['predicted_rating']))
+mae = mean_absolute_error(test_data['rating'], test_data['predicted_rating'])
+
+print(f'RMSE: {rmse}')
+print(f'MAE: {mae}')
+
 # Compute cosine similarity between users
 user_similarity = cosine_similarity(latent_matrix)
 
@@ -126,7 +157,10 @@ def login():
         return jsonify({"msg": "Invalid username or password"}), 401
 
     access_token = create_access_token(identity=user.id)
-    return jsonify(access_token=access_token), 200
+    return jsonify({
+            'access_token': access_token,
+            'user_id': user['user_id']  # Return user_id
+        }), 200
 
 
 # Rate a movie (JWT required)
@@ -185,6 +219,32 @@ def get_recommendations_SVD_Factorization(user_id):
 def get_movie_list():
     movie_list = [{'movie_id': mid, 'movie_name': name} for mid, name in movie_names.items()]
     return jsonify(movie_list), 200
+
+registry = CollectorRegistry()
+
+# Create Prometheus metrics
+RMSE_GAUGE = Gauge('svd_rmse', 'Root Mean Squared Error of the SVD Model', registry=registry)
+MAE_GAUGE = Gauge('svd_mae', 'Mean Absolute Error of the SVD Model', registry=registry)
+PREDICTION_COUNTER = Counter('predictions_made', 'Total number of movie rating predictions', registry=registry)
+
+
+@app.route('/evaluate_model', methods=['GET'])
+def evaluate_model():
+    try:
+        rmse = np.sqrt(mean_squared_error(test_data['rating'], test_data['predicted_rating']))
+        mae = mean_absolute_error(test_data['rating'], test_data['predicted_rating'])
+
+        # Update Prometheus metrics
+        RMSE_GAUGE.set(rmse)
+        MAE_GAUGE.set(mae)
+
+        return jsonify({'RMSE': rmse, 'MAE': mae}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/metrics', methods=['GET'])
+def metrics():
+    return generate_latest(registry), 200
 
 if __name__ == '__main__':
     app.run(debug=True)

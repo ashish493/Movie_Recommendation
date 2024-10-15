@@ -26,10 +26,12 @@ export class MovieRatingComponent {
     this.movieService.login(this.username, this.password).subscribe(
       response => {
         this.movieService.setToken(response.access_token);
+        this.userId = response.user_id;
         this.loggedIn = true;
       },
       error => {
         console.error('Login failed:', error);
+        this.errorMessage = 'Login failed. Please check your credentials.';
       }
     );
   }
@@ -51,24 +53,47 @@ export class MovieRatingComponent {
 
   // Submit a movie rating
   rateMovie() {
-    if (this.movieId && this.rating) {
+    if (this.userId && this.movieId && this.rating) {
       this.movieService.rateMovie(this.userId, this.movieId, this.rating).subscribe(
         response => {
           console.log('Movie rated successfully:', response);
-          this.getRecommendations();
+          this.getRecommendations(); // Fetch recommendations after rating
         },
         error => {
           console.error('Error rating the movie:', error);
+          this.errorMessage = 'Could not rate the movie. Please try again.';
         }
       );
+    } else {
+      this.errorMessage = 'Please provide valid movie details.';
     }
   }
 
   // Get movie recommendations based on rating
-  getRecommendations() {
+//   getRecommendations() {
+//     this.movieService.getRecommendations(this.userId).subscribe(
+//       (data) => {
+//         this.recommendations = data.recommendations;  
+//         this.movieService.evaluateModel().subscribe(response => {
+//           console.log('Model evaluation:', response);
+//         });// Update the recommendation list
+//       },
+//       (error) => {
+//         console.error('Error fetching recommendations:', error);
+//         this.errorMessage = 'Could not fetch recommendations. Please try again later.';
+//       }
+//     );
+//   }
+// }
+
+getRecommendations() {
+  if (this.userId) {
     this.movieService.getRecommendations(this.userId).subscribe(
       (data) => {
-        this.recommendations = data.recommendations;  // Update the recommendation list
+        this.recommendations = data.recommendations; // Update the recommendation list
+        this.movieService.evaluateModel().subscribe(response => {
+                    console.log('Model evaluation:', response);
+                  });// Update the recommendation list
       },
       (error) => {
         console.error('Error fetching recommendations:', error);
@@ -76,4 +101,5 @@ export class MovieRatingComponent {
       }
     );
   }
+}
 }
