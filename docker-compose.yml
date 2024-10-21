@@ -1,0 +1,42 @@
+version: '3'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  flask_svd:
+    build: .
+    container_name: flask_svd
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  angular_ui:
+    build: ./ui/movie-recommendation-ui/ # Define the correct path to your Angular UI Dockerfile
+    container_name: angular_ui
+    ports:
+      - "4200:4200"  # Angular app will be available at http://localhost:4200
+    restart: unless-stopped
+
+volumes:
+  grafana_data:

@@ -1,0 +1,12 @@
+Flask
+pandas
+bcrypt
+Flask-JWT-Extended
+scikit-learn
+flask_cors
+numpy
+prometheus_client
+prometheus_flask_exporter
+flask_sqlalchemy
+Flask-RQ2
+redis
