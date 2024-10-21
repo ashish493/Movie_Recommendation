@@ -1,0 +1,17 @@
+{
+	"ulid": "01JAERZDK2ZQDE9CVANVPEEK33",
+	"minTime": 1729188003315,
+	"maxTime": 1729195200000,
+	"stats": {
+		"numSamples": 299646,
+		"numSeries": 804,
+		"numChunks": 2728
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01JAERZDK2ZQDE9CVANVPEEK33"
+		]
+	},
+	"version": 1
+}

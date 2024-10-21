@@ -22,8 +22,10 @@
     <h2>Rate a Movie</h2>
     <form (ngSubmit)="rateMovie()">
       <div class="form-group">
-        <label for="movieId">Movie ID:</label>
-        <input type="number" [(ngModel)]="movieId" name="movieId" class="form-control" required>
+        <label for="movieId">Movie Name:</label>
+        <select [(ngModel)]="movieId" name="movieId" class="form-control" required>
+          <option *ngFor="let movie of movieList" [value]="movie.id">{{movie.name}}</option>
+        </select>
       </div>
       <div class="form-group">
         <label for="rating">Rating (1-5):</label>
@@ -37,9 +39,18 @@
       <h3>Recommended Movies</h3>
       <ul class="list-group">
         <li *ngFor="let movie of recommendations" class="list-group-item">
-          Movie Name: {{movie.movie_name}}, Predicted Rating: {{movie.predicted_rating}}
+          Movie Name: {{movie.movie_name}}, Similarity Score: {{movie.predicted_rating}}
         </li>
       </ul>
     </div>
   </div>
+
+  <div>
+    <h2>Movie Rating</h2>
+    <!-- Button to fetch recommendations -->
+    <button class="btn btn-primary" (click)="getRecommendations()">Get Recommendations</button>
+    <!-- Error message -->
+    <div *ngIf="errorMessage" class="alert alert-danger">
+      {{errorMessage}}
+    </div>
 </div>

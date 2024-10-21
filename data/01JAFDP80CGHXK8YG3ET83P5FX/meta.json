@@ -1,0 +1,17 @@
+{
+	"ulid": "01JAFDP80CGHXK8YG3ET83P5FX",
+	"minTime": 1729231203285,
+	"maxTime": 1729238400000,
+	"stats": {
+		"numSamples": 396592,
+		"numSeries": 827,
+		"numChunks": 3308
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01JAFDP80CGHXK8YG3ET83P5FX"
+		]
+	},
+	"version": 1
+}

@@ -45,7 +45,7 @@ export class MovieService {
     });
     const url = `${this.apiUrl}/evaluate_model`;
     // const body = { user_id: userId, movie_id: movieId, rating: rating };
-    return this.http.post<any>(url, { headers });
+    return this.http.get<any>(url, { headers });
   }
 
 

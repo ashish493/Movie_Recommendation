@@ -12,11 +12,18 @@ import numpy as np
 from prometheus_client import Counter, Gauge, Summary, generate_latest
 from prometheus_client.core import CollectorRegistry
 from prometheus_flask_exporter import PrometheusMetrics
+from sqlalchemy.pool import QueuePool, NullPool
 
 app = Flask(__name__)
 metrics = PrometheusMetrics(app) 
 # DB Config
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///moviedb.sqlite'  # Path to your SQLite database file
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///moviedb.sqlite?check_same_thread=False'  # Path to your SQLite database file
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'poolclass': NullPool  # Since SQLite doesn't need pooling for this setup
+}
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'connect_args': {'timeout': 30}  # wait for 30 seconds before giving up
+}
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'your_jwt_secret_key'  # Change this to a strong secret key
 db.init_app(app)
@@ -33,6 +40,15 @@ jwt = JWTManager(app)
 
 # In-memory users database
 users_db = {}
+
+
+registry = CollectorRegistry()
+# Create Prometheus metrics
+RMSE_GAUGE = Gauge('svd_rmse', 'Root Mean Squared Error of the SVD Model', registry=registry)
+MAE_GAUGE = Gauge('svd_mae', 'Mean Absolute Error of the SVD Model', registry=registry)
+PREDICTION_COUNTER = Counter('predictions_made', 'Total number of movie rating predictions', registry=registry)
+
+
 
 # Load MovieLens 100K Dataset
 def load_movie_names(filepath):
@@ -53,48 +69,92 @@ ratings_df = pd.read_csv(ratings_file, sep='\t', names=['userId', 'movieId', 'ra
 train_data, test_data = train_test_split(ratings_df, test_size=0.2, random_state=42)
 train_user_item_matrix = train_data.pivot(index='userId', columns='movieId', values='rating').fillna(0)
 # Populate data from existing dataset to our DB
-with app.app_context():
-    # Step 1: Populate the 'user' table with unique users from the dataset
-    unique_users = ratings_df['userId'].unique()
+# with app.app_context():
+#     # Step 1: Populate the 'user' table with unique users from the dataset
+#     unique_users = ratings_df['userId'].unique()
 
-    for user_id in unique_users:
-        try:
-            # Cast the user_id to a Python int to avoid datatype mismatch
-            user_id = int(user_id)
+#     for user_id in unique_users:
+#         try:
+#             # Cast the user_id to a Python int to avoid datatype mismatch
+#             user_id = int(user_id)
 
-            # Create a simple username and a hashed password for each user
-            username = f"user_{user_id}"
-            password = bcrypt.hashpw('default_password'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+#             # Create a simple username and a hashed password for each user
+#             username = f"user_{user_id}"
+#             password = bcrypt.hashpw('default_password'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-            # Check if user ID already exists in the database before adding
-            if not User.query.filter_by(id=user_id).first():
-                new_user = User(id=user_id, username=username, password=password)
-                db.session.add(new_user)
-        except Exception as e:
-            print(f"Error adding user {user_id}: {e}")
-            db.session.rollback()  # Rollback the session if an error occurs
-            continue  # Skip to the next user
+#             # Check if user ID already exists in the database before adding
+#             if not User.query.filter_by(id=user_id).first():
+#                 new_user = User(id=user_id, username=username, password=password)
+#                 db.session.add(new_user)
+#         except Exception as e:
+#             print(f"Error adding user {user_id}: {e}")
+#             db.session.rollback()  # Rollback the session if an error occurs
+#             continue  # Skip to the next user
 
-    db.session.commit()
-    print(f"Populated user table with {len(unique_users)} users.")
+#     db.session.commit()
+#     print(f"Populated user table with {len(unique_users)} users.")
 
-    # Step 2: Populate the 'rating' table with data from the dataset
-    for _, row in ratings_df.iterrows():
-        try:
-            user_id = int(row['userId'])  # Ensure user_id is cast to Python int
-            movie_id = int(row['movieId'])
-            rating = float(row['rating'])
+#     # Step 2: Populate the 'rating' table with data from the dataset
+#     for _, row in ratings_df.iterrows():
+#         try:
+#             user_id = int(row['userId'])  # Ensure user_id is cast to Python int
+#             movie_id = int(row['movieId'])
+#             rating = float(row['rating'])
 
-            # Add each rating to the 'rating' table
-            new_rating = Rating(user_id=user_id, movie_id=movie_id, rating=rating)
-            db.session.add(new_rating)
-        except Exception as e:
-            print(f"Error adding rating for user {user_id} and movie {movie_id}: {e}")
-            db.session.rollback()  # Rollback the session if an error occurs
-            continue  # Skip to the next rating
+#             # Add each rating to the 'rating' table
+#             new_rating = Rating(user_id=user_id, movie_id=movie_id, rating=rating)
+#             db.session.add(new_rating)
+#         except Exception as e:
+#             print(f"Error adding rating for user {user_id} and movie {movie_id}: {e}")
+#             db.session.rollback()  # Rollback the session if an error occurs
+#             continue  # Skip to the next rating
 
-    db.session.commit()
-    print(f"Populated rating table with {len(ratings_df)} ratings.")
+#     db.session.commit()
+#     print(f"Populated rating table with {len(ratings_df)} ratings.")
+
+def populate_database():
+    with app.app_context():
+        if User.query.first() is None:  # Only populate if no users exist
+            unique_users = ratings_df['userId'].unique()
+            for user_id in unique_users:
+                try:
+                    user_id = int(user_id)
+                    username = f"user_{user_id}"
+                    password = bcrypt.hashpw('default_password'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+                    # Check if user ID already exists in the database before adding
+                    if not User.query.filter_by(id=user_id).first():
+                        new_user = User(id=user_id, username=username, password=password)
+                        db.session.add(new_user)
+                except Exception as e:
+                    print(f"Error adding user {user_id}: {e}")
+                    db.session.rollback()
+                    continue
+
+            db.session.commit()
+            print(f"Populated user table with {len(unique_users)} users.")
+
+        if Rating.query.first() is None:  # Only populate if no ratings exist
+            for _, row in ratings_df.iterrows():
+                try:
+                    user_id = int(row['userId'])
+                    movie_id = int(row['movieId'])
+                    rating = float(row['rating'])
+
+                    # Add each rating to the 'rating' table
+                    new_rating = Rating(user_id=user_id, movie_id=movie_id, rating=rating)
+                    db.session.add(new_rating)
+                except Exception as e:
+                    print(f"Error adding rating for user {user_id} and movie {movie_id}: {e}")
+                    db.session.rollback()
+                    continue
+
+            db.session.commit()
+            print(f"Populated rating table with {len(ratings_df)} ratings.")
+
+# Call the populate function if needed
+populate_database()
+
 
 # Create a user-item matrix
 user_item_matrix = ratings_df.pivot(index='userId', columns='movieId', values='rating').fillna(0)
@@ -159,7 +219,7 @@ def login():
     access_token = create_access_token(identity=user.id)
     return jsonify({
             'access_token': access_token,
-            'user_id': user['user_id']  # Return user_id
+            'user_id': user.id  # Return user_id
         }), 200
 
 
@@ -167,11 +227,17 @@ def login():
 @app.route('/rate', methods=['POST'])
 @jwt_required()
 def rate_movie():
+    print("inside rate funxtion")
     current_user = get_jwt_identity()
     user_id = current_user  # Get the current user's ID from JWT
     movie_id = int(request.json.get('movie_id'))
     rating = float(request.json.get('rating'))
-
+    
+    # Print values to the console
+    print(f"User ID: {user_id}")
+    print(f"Movie ID: {movie_id}")
+    print(f"Rating: {rating}")
+    
     # Add rating to the database
     new_rating = Rating(user_id=user_id, movie_id=movie_id, rating=rating)
     db.session.add(new_rating)
@@ -212,7 +278,7 @@ def get_recommendations_SVD_Factorization(user_id):
 
     # Prepare the recommendations for output with movie names
     recommendations_list = [{'movie_name': movie_names.get(movie[0], "Unknown Movie"), 'predicted_rating': movie[1]} for movie in recommendations]
-
+    PREDICTION_COUNTER.inc()
     return jsonify({'recommendations': recommendations_list}), 200
 
 @app.route('/movies', methods=['GET'])
@@ -220,12 +286,6 @@ def get_movie_list():
     movie_list = [{'movie_id': mid, 'movie_name': name} for mid, name in movie_names.items()]
     return jsonify(movie_list), 200
 
-registry = CollectorRegistry()
-
-# Create Prometheus metrics
-RMSE_GAUGE = Gauge('svd_rmse', 'Root Mean Squared Error of the SVD Model', registry=registry)
-MAE_GAUGE = Gauge('svd_mae', 'Mean Absolute Error of the SVD Model', registry=registry)
-PREDICTION_COUNTER = Counter('predictions_made', 'Total number of movie rating predictions', registry=registry)
 
 
 @app.route('/evaluate_model', methods=['GET'])
@@ -239,12 +299,17 @@ def evaluate_model():
         MAE_GAUGE.set(mae)
 
         return jsonify({'RMSE': rmse, 'MAE': mae}), 200
-    except Exception as e:
+    except Exception as e: 
         return jsonify({'error': str(e)}), 500
 
 @app.route('/metrics', methods=['GET'])
-def metrics():
+def metrics(): 
+    # Print metrics to the console
+    print(f'RMSE: {rmse}')
+    print(f'MAE: {mae}')
+    print(f'Total Predictions Made: {PREDICTION_COUNTER._value.get()}')
+    
     return generate_latest(registry), 200
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)

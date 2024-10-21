@@ -1,60 +1,67 @@
 import requests
 import random
-import time
 
-# API URL (change to your Flask API's base URL)
-API_URL = 'http://localhost:5000'
+# URL for API endpoints
+LOGIN_URL = "http://localhost:5000/login"  # Change this to your login URL
+RATE_MOVIE_URL = "http://localhost:5000/rate"  # Change this to your rating API URL
 
-# User credentials for login
-USERNAME = 'user_1'  # Example user
-PASSWORD = 'default_password'
+# Sample users (you may have more or use real users from your database)
+users = [
+    {"username": "user_1", "password": "default_password"},
+    {"username": "user_2", "password": "default_password"},
+    {"username": "user_3", "password": "default_password"},
+    {"username": "user_4", "password": "default_password"},
+    {"username": "user_5", "password": "default_password"},
+    {"username": "user_6", "password": "default_password"},
+    {"username": "user_7", "password": "default_password"},
+    {"username": "user_8", "password": "default_password"},
+    {"username": "user_9", "password": "default_password"},
+    {"username": "user_10", "password": "default_password"},
+    # Add more users as needed
+]
 
-# Total number of movies and the range for random ratings
-MOVIE_ID_RANGE = (1, 100)  # Adjust based on your actual movie IDs
-RATING_RANGE = (1, 5)  # Ratings between 1 and 5
+# List of movie IDs (assuming you have a list of movie IDs)
+movies = list(range(1, 1683))  # Assuming movie IDs are from 1 to 1682
 
-# Get JWT token by logging in
-def login(username, password):
-    url = f'{API_URL}/login'
-    payload = {'username': username, 'password': password}
-    response = requests.post(url, json=payload)
-
+def login_and_rate(user):
+    # Log in to get user token (if your API uses tokens for authentication)
+    login_payload = {
+        "username": user["username"],
+        "password": user["password"]
+    }
+    
+    response = requests.post(LOGIN_URL, json=login_payload)
     if response.status_code == 200:
-        return response.json()['access_token']
+        print(f"User {user['username']} logged in successfully.")
+        token = response.json().get("token")
+        
+        # Rate random movies
+        for _ in range(10):  # Each user rates 5 movies randomly
+            movie_id = random.choice(movies)
+            rating = random.randint(1, 5)  # Random rating between 1 and 5
+            
+            rate_payload = {
+                "movie_id": movie_id,
+                "rating": rating
+            }
+            
+            # Set headers if you are using a token for authentication
+            headers = {
+                "Authorization": f"Bearer {token}"
+            }
+            
+            rate_response = requests.post(RATE_MOVIE_URL, json=rate_payload, headers=headers)
+            if rate_response.status_code == 200:
+                print(f"User {user['username']} rated movie {movie_id} with {rating} stars.")
+            else:
+                print(f"Failed to rate movie {movie_id}. Status code: {rate_response.status_code}")
     else:
-        print(f"Login failed: {response.text}")
-        return None
+        print(f"Login failed for {user['username']}. Status code: {response.status_code}")
 
-# Rate a random movie
-def rate_random_movie(token):
-    headers = {'Authorization': f'Bearer {token}'}
-    movie_id = random.randint(*MOVIE_ID_RANGE)
-    rating = random.randint(*RATING_RANGE)
+def main():
+    # Simulate random user logins and movie ratings
+    for user in users:
+        login_and_rate(user)
 
-    url = f'{API_URL}/rate'
-    payload = {'movie_id': movie_id, 'rating': rating}
-
-    response = requests.post(url, json=payload, headers=headers)
-
-    if response.status_code == 200:
-        print(f"Successfully rated movie {movie_id} with rating {rating}")
-    else:
-        print(f"Failed to rate movie: {response.text}")
-
-# Function to repeatedly rate random movies
-def repeatedly_rate_movies(username, password, num_ratings=100, delay=1):
-    token = login(username, password)
-
-    if token:
-        for i in range(num_ratings):
-            rate_random_movie(token)
-            time.sleep(delay)  # Add delay between requests to avoid overloading the server
-    else:
-        print("Unable to obtain JWT token, aborting.")
-
-if __name__ == '__main__':
-    # Number of ratings to submit and delay between each request
-    NUMBER_OF_RATINGS = 50  # Adjust as needed
-    DELAY_BETWEEN_RATINGS = 2  # 2 seconds delay between requests
-
-    repeatedly_rate_movies(USERNAME, PASSWORD, num_ratings=NUMBER_OF_RATINGS, delay=DELAY_BETWEEN_RATINGS)
+if __name__ == "__main__":
+    main()
