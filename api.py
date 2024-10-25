@@ -3,52 +3,28 @@ from flask_jwt_extended import JWTManager, create_access_token, jwt_required, ge
 from flask_cors import CORS
 import bcrypt
 import pandas as pd
-from sklearn.decomposition import TruncatedSVD
-from sklearn.metrics.pairwise import cosine_similarity
-from models import db, Rating, User
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-import numpy as np
-from prometheus_client import Counter, Gauge, Summary, generate_latest
+from prometheus_client import Counter, Gauge, generate_latest
 from prometheus_client.core import CollectorRegistry
 from prometheus_flask_exporter import PrometheusMetrics
-from sqlalchemy.pool import QueuePool, NullPool
+from models import db, Rating, User
+from sklearn.model_selection import train_test_split
+import torch
+from torch_movie import MatrixFactorization  # Import your PyTorch model class
+import numpy as np
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 app = Flask(__name__)
-metrics = PrometheusMetrics(app) 
+metrics = PrometheusMetrics(app)
+
 # DB Config
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///moviedb.sqlite?check_same_thread=False'  # Path to your SQLite database file
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'poolclass': NullPool  # Since SQLite doesn't need pooling for this setup
-}
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'connect_args': {'timeout': 30}  # wait for 30 seconds before giving up
-}
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///moviedb.sqlite?check_same_thread=False'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'your_jwt_secret_key'  # Change this to a strong secret key
 db.init_app(app)
 
-# with app.app_context():
-#     db.create_all() 
-
-# Enable CORS for angular 
+# Enable CORS for Angular
 CORS(app)
-CORS(app, resources={r"/*": {"origins": "http://localhost:4200"}})
-# JWT Secret Key
-app.config['JWT_SECRET_KEY'] = 'super-secret-key'
 jwt = JWTManager(app)
-
-# In-memory users database
-users_db = {}
-
-
-registry = CollectorRegistry()
-# Create Prometheus metrics
-RMSE_GAUGE = Gauge('svd_rmse', 'Root Mean Squared Error of the SVD Model', registry=registry)
-MAE_GAUGE = Gauge('svd_mae', 'Mean Absolute Error of the SVD Model', registry=registry)
-PREDICTION_COUNTER = Counter('predictions_made', 'Total number of movie rating predictions', registry=registry)
-
-
 
 # Load MovieLens 100K Dataset
 def load_movie_names(filepath):
@@ -66,51 +42,35 @@ movie_names = load_movie_names('dataset/ml-100k/u.item')
 ratings_file = 'dataset/ml-100k/u.data'
 ratings_df = pd.read_csv(ratings_file, sep='\t', names=['userId', 'movieId', 'rating', 'timestamp'])
 
+# Split the dataset into training and test sets
 train_data, test_data = train_test_split(ratings_df, test_size=0.2, random_state=42)
-train_user_item_matrix = train_data.pivot(index='userId', columns='movieId', values='rating').fillna(0)
-# Populate data from existing dataset to our DB
-# with app.app_context():
-#     # Step 1: Populate the 'user' table with unique users from the dataset
-#     unique_users = ratings_df['userId'].unique()
 
-#     for user_id in unique_users:
-#         try:
-#             # Cast the user_id to a Python int to avoid datatype mismatch
-#             user_id = int(user_id)
+# PyTorch model configuration
+n_users, n_items = ratings_df['userId'].nunique(), ratings_df['movieId'].nunique()
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-#             # Create a simple username and a hashed password for each user
-#             username = f"user_{user_id}"
-#             password = bcrypt.hashpw('default_password'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+# Initialize the model and load saved state
+def load_model(n_users, n_items):
+    model = MatrixFactorization(n_users, n_items).to(device)
+    model.load_state_dict(torch.load('matrix_factorization_model.pth', map_location=device))
+    model.eval()  # Set the model to evaluation mode
+    return model
 
-#             # Check if user ID already exists in the database before adding
-#             if not User.query.filter_by(id=user_id).first():
-#                 new_user = User(id=user_id, username=username, password=password)
-#                 db.session.add(new_user)
-#         except Exception as e:
-#             print(f"Error adding user {user_id}: {e}")
-#             db.session.rollback()  # Rollback the session if an error occurs
-#             continue  # Skip to the next user
+# Predict rating function
+def predict_rating(model, user_id, movie_id):
+    user = torch.tensor([user_id], dtype=torch.long, device=device)
+    item = torch.tensor([movie_id], dtype=torch.long, device=device)
+    with torch.no_grad():
+        prediction = model(user, item).item()
+    return prediction
 
-#     db.session.commit()
-#     print(f"Populated user table with {len(unique_users)} users.")
+# Prometheus metrics setup
+registry = CollectorRegistry()
+RMSE_GAUGE = Gauge('model_rmse', 'Root Mean Squared Error of the Model', registry=registry)
+MAE_GAUGE = Gauge('model_mae', 'Mean Absolute Error of the Model', registry=registry)
+PREDICTION_COUNTER = Counter('predictions_made', 'Total number of movie rating predictions', registry=registry)
 
-#     # Step 2: Populate the 'rating' table with data from the dataset
-#     for _, row in ratings_df.iterrows():
-#         try:
-#             user_id = int(row['userId'])  # Ensure user_id is cast to Python int
-#             movie_id = int(row['movieId'])
-#             rating = float(row['rating'])
-
-#             # Add each rating to the 'rating' table
-#             new_rating = Rating(user_id=user_id, movie_id=movie_id, rating=rating)
-#             db.session.add(new_rating)
-#         except Exception as e:
-#             print(f"Error adding rating for user {user_id} and movie {movie_id}: {e}")
-#             db.session.rollback()  # Rollback the session if an error occurs
-#             continue  # Skip to the next rating
-
-#     db.session.commit()
-#     print(f"Populated rating table with {len(ratings_df)} ratings.")
+# User Registration and Authentication
 
 def populate_database():
     with app.app_context():
@@ -155,41 +115,6 @@ def populate_database():
 # Call the populate function if needed
 populate_database()
 
-
-# Create a user-item matrix
-user_item_matrix = ratings_df.pivot(index='userId', columns='movieId', values='rating').fillna(0)
-
-# Perform matrix factorization using Truncated SVD
-svd = TruncatedSVD(n_components=50)
-latent_matrix = svd.fit_transform(user_item_matrix)
-
-train_latent_matrix = svd.fit_transform(train_user_item_matrix)
-approx_matrix = np.dot(train_latent_matrix, svd.components_)
-train_pred_matrix = pd.DataFrame(approx_matrix, index=train_user_item_matrix.index, columns=train_user_item_matrix.columns)
-
-def predict_rating(user_id, movie_id):
-    try:
-        return train_pred_matrix.loc[user_id, movie_id]
-    except KeyError:
-        return np.nan  # Return NaN if user_id or movie_id is not found in the training set
-
-# Make predictions for the test set
-test_data['predicted_rating'] = test_data.apply(lambda row: predict_rating(row['userId'], row['movieId']), axis=1)
-
-# Drop rows with missing predictions
-test_data.dropna(subset=['predicted_rating'], inplace=True)
-
-# Calculate RMSE and MAE
-rmse = np.sqrt(mean_squared_error(test_data['rating'], test_data['predicted_rating']))
-mae = mean_absolute_error(test_data['rating'], test_data['predicted_rating'])
-
-print(f'RMSE: {rmse}')
-print(f'MAE: {mae}')
-
-# Compute cosine similarity between users
-user_similarity = cosine_similarity(latent_matrix)
-
-# User Registration
 @app.route('/register', methods=['POST'])
 def register():
     username = request.json.get('username')
@@ -199,14 +124,12 @@ def register():
         return jsonify({"msg": "Username already exists"}), 400
 
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    new_user = User(username=username, password=hashed_password.decode('utf-8'))  # Decode to string
+    new_user = User(username=username, password=hashed_password.decode('utf-8'))
     db.session.add(new_user)
     db.session.commit()
     
     return jsonify({"msg": "User registered successfully"}), 201
 
-
-# User Login
 @app.route('/login', methods=['POST'])
 def login():
     username = request.json.get('username')
@@ -217,67 +140,42 @@ def login():
         return jsonify({"msg": "Invalid username or password"}), 401
 
     access_token = create_access_token(identity=user.id)
-    return jsonify({
-            'access_token': access_token,
-            'user_id': user.id  # Return user_id
-        }), 200
+    return jsonify({'access_token': access_token, 'user_id': user.id}), 200
 
-
-# Rate a movie (JWT required)
+# Rate a movie
 @app.route('/rate', methods=['POST'])
 @jwt_required()
 def rate_movie():
-    print("inside rate funxtion")
     current_user = get_jwt_identity()
-    user_id = current_user  # Get the current user's ID from JWT
+    user_id = current_user
     movie_id = int(request.json.get('movie_id'))
     rating = float(request.json.get('rating'))
-    
-    # Print values to the console
-    print(f"User ID: {user_id}")
-    print(f"Movie ID: {movie_id}")
-    print(f"Rating: {rating}")
-    
-    # Add rating to the database
+
     new_rating = Rating(user_id=user_id, movie_id=movie_id, rating=rating)
     db.session.add(new_rating)
     db.session.commit()
 
-    movie_name = movie_names.get(movie_id, "Unknown Movie")  # Fetch movie name
-
+    movie_name = movie_names.get(movie_id, "Unknown Movie")
     return jsonify({"msg": f"User {user_id} rated movie '{movie_name}' with {rating}"}), 200
 
-# Get movie recommendations (JWT required)
+# Get movie recommendations using PyTorch model
 @app.route('/recommendations/<int:user_id>', methods=['GET'])
 @jwt_required()
-def get_recommendations_SVD_Factorization(user_id):
-    # Get similarity scores for the current user
-    similar_users = list(enumerate(user_similarity[user_id - 1]))  # Adjust user_id index
-    similar_users = sorted(similar_users, key=lambda x: x[1], reverse=True)
-
-    # Get top similar users
-    top_similar_users = similar_users[1:11]  # Exclude the user themselves
-
-    # Gather recommendations from top similar users
+def get_recommendations(user_id):
     movie_scores = {}
-    
-    for similar_user_id, similarity_score in top_similar_users:
-        similar_user_ratings = Rating.query.filter_by(user_id=(similar_user_id + 1)).all()
-        
-        for rating in similar_user_ratings:
-            movie_id = rating.movie_id
-            rating_value = rating.rating
-            
-            if movie_id not in movie_scores:
-                movie_scores[movie_id] = rating_value * similarity_score
-            else:
-                movie_scores[movie_id] += rating_value * similarity_score
 
-    # Sort movies by predicted score
+    # Load pre-trained model
+    model = load_model(n_users=n_users, n_items=n_items)
+
+    # Predict ratings for all movies in the test set
+    for _, row in test_data.iterrows():
+        predicted_rating = predict_rating(model, row['userId'], row['movieId'])
+        movie_scores[row['movieId']] = predicted_rating
+
+    # Get top 10 recommended movies
     recommendations = sorted(movie_scores.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    # Prepare the recommendations for output with movie names
     recommendations_list = [{'movie_name': movie_names.get(movie[0], "Unknown Movie"), 'predicted_rating': movie[1]} for movie in recommendations]
+
     PREDICTION_COUNTER.inc()
     return jsonify({'recommendations': recommendations_list}), 200
 
@@ -285,8 +183,6 @@ def get_recommendations_SVD_Factorization(user_id):
 def get_movie_list():
     movie_list = [{'movie_id': mid, 'movie_name': name} for mid, name in movie_names.items()]
     return jsonify(movie_list), 200
-
-
 
 @app.route('/evaluate_model', methods=['GET'])
 def evaluate_model():
@@ -303,12 +199,7 @@ def evaluate_model():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/metrics', methods=['GET'])
-def metrics(): 
-    # Print metrics to the console
-    print(f'RMSE: {rmse}')
-    print(f'MAE: {mae}')
-    print(f'Total Predictions Made: {PREDICTION_COUNTER._value.get()}')
-    
+def metrics():
     return generate_latest(registry), 200
 
 if __name__ == '__main__':
