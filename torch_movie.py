@@ -1,25 +1,12 @@
-import os
-import numpy as np
-import pandas as pd
-from scipy import sparse
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-import matplotlib.pyplot as plt
-import seaborn as sns
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.optim import SparseAdam, Adam, Adagrad, SGD
+from torch.optim import Adam
+import pandas as pd
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-COLS = ['user_id', 'movie_id', 'rating', 'timestamp']
-train_data = pd.read_csv("./dataset/ml-100k/u1.base", sep='\t', names=COLS).drop(columns=['timestamp']).astype(int)
-test_data = pd.read_csv("./dataset/ml-100k/u1.test", sep='\t', names=COLS).drop(columns=['timestamp']).astype(int)
-n_users, n_items = 943, 1682
-
+# Define Matrix Factorization model class
 class MatrixFactorization(nn.Module):
     def __init__(self, n_users, n_items, n_factors=20):
         super().__init__()
@@ -30,40 +17,54 @@ class MatrixFactorization(nn.Module):
         user = user.to(device) - 1
         item = item.to(device) - 1
         u, it = self.user_factors(user), self.item_factors(item)
-        x = (u * it).sum(1)
-        assert x.shape == user.shape
-        return x * 5
+        return (u * it).sum(1) * 5
 
-model = MatrixFactorization(n_users, n_items).to(device)
-opt = Adam(model.parameters(), lr=1e-3)
-criterion = nn.L1Loss()
-BATCH_SIZE = 32
+# Model initialization function
+def initialize_model(n_users, n_items, n_factors=20):
+    model = MatrixFactorization(n_users, n_items, n_factors).to(device)
+    return model
 
-avg = []
-mx = []
-states = {}
-model.train(True)
-for e in range(20):
-    for it in range(len(train_data) // BATCH_SIZE):
-        # Setup batch data
-        df = train_data.sample(frac=BATCH_SIZE / len(train_data))
-        users = torch.tensor(df.user_id.values, dtype=torch.long, device=device)
-        items = torch.tensor(df.movie_id.values, dtype=torch.long, device=device)
-        targets = torch.tensor(df.rating.values, dtype=torch.float32, device=device)
-        assert users.shape == (BATCH_SIZE,) == items.shape
+# Model training function
+def train_model(model, train_data, epochs=20, batch_size=32, learning_rate=1e-3):
+    opt = Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.L1Loss()
+    model.train(True)
+    
+    # Training loop
+    for epoch in range(epochs):
+        avg_loss = []
         
-        # Train model
-        opt.zero_grad()
-        preds = model(users, items)
-        mx.append((preds.max().item(), preds.min().item()))
-        loss = criterion(preds, targets)
-        assert preds.shape == targets.shape
-        loss.backward()
-        opt.step()
-        avg.append(loss.item())
+        for _ in range(len(train_data) // batch_size):
+            df = train_data.sample(frac=batch_size / len(train_data))
+            users = torch.tensor(df.user_id.values, dtype=torch.long, device=device)
+            items = torch.tensor(df.movie_id.values, dtype=torch.long, device=device)
+            targets = torch.tensor(df.rating.values, dtype=torch.float32, device=device)
 
-    print(f"EPOCH {e+1}: {sum(avg) / len(avg)}")
-    avg = []
-    states[e+1] = model.state_dict()
+            opt.zero_grad()
+            preds = model(users, items)
+            loss = criterion(preds, targets)
+            loss.backward()
+            opt.step()
+            avg_loss.append(loss.item())
+        
+        print(f"Epoch {epoch + 1}/{epochs}, Loss: {sum(avg_loss) / len(avg_loss)}")
 
-torch.save(model.state_dict(), "matrix_factorization_model.pth")
+# Save model state function
+def save_model(model, path="matrix_factorization_model.pth"):
+    torch.save(model.state_dict(), path)
+
+# Load model state function
+def load_model_state(model, path="matrix_factorization_model.pth"):
+    model.load_state_dict(torch.load(path, map_location=device))
+    model.eval()
+
+# Execute training only if script is run directly
+if __name__ == "__main__":
+    COLS = ['user_id', 'movie_id', 'rating', 'timestamp']
+    train_data = pd.read_csv("./dataset/ml-100k/u1.base", sep='\t', names=COLS).drop(columns=['timestamp']).astype(int)
+    n_users, n_items = 943, 1682
+
+    # Initialize and train model
+    model = initialize_model(n_users, n_items)
+    train_model(model, train_data)
+    save_model(model)
