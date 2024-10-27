@@ -1,3 +1,4 @@
+import os
 from flask import Flask, jsonify, request
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_cors import CORS
@@ -12,7 +13,13 @@ import torch
 from torch_movie import MatrixFactorization  # Import your PyTorch model class
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+import torch.multiprocessing as mp
+from torch.distributed import init_process_group
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, Dataset
 import logging
+import queue  # For job queuing
+from threading import Thread
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -29,6 +36,68 @@ db.init_app(app)
 # Enable CORS for Angular
 CORS(app)
 jwt = JWTManager(app)
+
+train_job_queue = queue.Queue()
+# Initialize distributed process group for parallel processing
+def setup_ddp(rank, world_size):
+    init_process_group(backend='nccl', rank=rank, world_size=world_size)
+
+# Dataset class to support parallel processing
+class RatingsDataset(Dataset):
+    def __init__(self, dataframe):
+        self.dataframe = dataframe
+
+    def __len__(self):
+        return len(self.dataframe)
+
+    def __getitem__(self, idx):
+        row = self.dataframe.iloc[idx]
+        return int(row['userId']), int(row['movieId']), float(row['rating'])
+
+# Training function using DDP
+def train_model_ddp(rank, world_size, train_data):
+    os.environ['MASTER_ADDR'] = '127.0.0.1'
+    os.environ['MASTER_PORT'] = '29500'
+    setup_ddp(rank, world_size)
+    model = MatrixFactorization(n_users, n_items).to(rank)
+    model = DDP(model, device_ids=[rank])
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    criterion = torch.nn.MSELoss()
+    train_loader = DataLoader(RatingsDataset(train_data), batch_size=32, shuffle=True)
+
+    for epoch in range(1):  # 1 epoch as example, you can increase this
+        epoch_loss = 0.0
+        for users, items, ratings in train_loader:
+            users, items, ratings = users.to(rank), items.to(rank), ratings.to(rank)
+            optimizer.zero_grad()
+            outputs = model(users, items)
+            loss = criterion(outputs, ratings)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+
+    # Save model after each training session
+    if rank == 0:
+        torch.save(model.module.state_dict(), 'matrix_factorization_model.pth')
+
+# Worker function to process jobs in parallel
+def worker_function():
+    while True:
+        try:
+            # Block until job is available
+            job_data = train_job_queue.get(timeout=10)
+            world_size = torch.cuda.device_count()
+            mp.spawn(train_model_ddp, args=(world_size, job_data), nprocs=world_size, join=True)
+            train_job_queue.task_done()
+        except queue.Empty:
+            logging.info("No jobs left in the queue, worker is idle.")
+            break
+
+# Start a worker thread
+worker_thread = Thread(target=worker_function)
+worker_thread.start()
+
 
 # Load MovieLens 100K Dataset
 def load_movie_names(filepath):
@@ -193,11 +262,14 @@ def rate_movie():
         new_row = pd.DataFrame({'userId': [user_id], 'movieId': [movie_id], 'rating': [rating], 'timestamp': [pd.Timestamp.now().timestamp()]})
         ratings_df = pd.concat([ratings_df, new_row], ignore_index=True)
 
-    # Use the updated DataFrame for training
-    updated_ratings_df = ratings_df
-    train_data, _ = train_test_split(updated_ratings_df, test_size=0.2, random_state=42)
-    model = load_model(n_users, n_items)
-    train_model(model, train_data)
+    # # Use the updated DataFrame for training
+    # updated_ratings_df = ratings_df
+    # train_data, _ = train_test_split(updated_ratings_df, test_size=0.2, random_state=42)
+    # model = load_model(n_users, n_items)
+    # train_model(model, train_data)
+    # Add job to training queue
+    train_job_queue.put(ratings_df)
+
     movie_name = movie_names.get(movie_id, "Unknown Movie")
     return jsonify({"msg": f"User {current_user} rated movie '{movie_name}' with {rating}"}), 200
 
